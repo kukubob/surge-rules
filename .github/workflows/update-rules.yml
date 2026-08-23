@@ -1,0 +1,118 @@
+name: Update Surge rules
+
+on:
+  schedule:
+    - cron: "47 6,18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-surge-rules
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out mirror repository
+        uses: actions/checkout@v6
+        with:
+          path: mirror
+          persist-credentials: false
+
+      - name: Check out upstream source
+        uses: actions/checkout@v6
+        with:
+          repository: SukkaW/Surge
+          ref: master
+          path: upstream
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Bootstrap previous output on first run
+        if: ${{ hashFiles('mirror/List/**') == '' }}
+        uses: actions/checkout@v6
+        with:
+          repository: SukkaLab/ruleset.skk.moe
+          ref: master
+          path: baseline
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.22.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: upstream/.node-version
+          package-manager-cache: false
+
+      - name: Install upstream dependencies
+        working-directory: upstream
+        run: |
+          pnpm config set --location=global minimumReleaseAge 0
+          pnpm install --frozen-lockfile
+
+      - name: Prepare previous build
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p generated
+          if [[ -d mirror/List ]]; then
+            cp -R mirror/List generated/List
+          else
+            cp -R baseline/List generated/List
+          fi
+
+      - name: Build current rules
+        working-directory: upstream
+        env:
+          PUBLIC_DIR: ${{ github.workspace }}/generated
+        run: pnpm run build
+
+      - name: Verify generated rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s generated/List/non_ip/ai.conf
+          test -s generated/List/non_ip/apple_intelligence.conf
+          test -s generated/List/ip/ai.conf
+          grep -q "Sukka's Ruleset" generated/List/non_ip/ai.conf
+          grep -q 'DOMAIN' generated/List/non_ip/apple_intelligence.conf
+          grep -Eq 'IP-CIDR|IP-CIDR6' generated/List/ip/ai.conf
+
+      - name: Stage generated List
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p mirror/List
+          rsync -a --delete generated/List/ mirror/List/
+          cp upstream/LICENSE mirror/LICENSE
+          git -C upstream rev-parse HEAD > mirror/UPSTREAM_COMMIT
+
+      - name: Commit and publish changes
+        working-directory: mirror
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -- List LICENSE UPSTREAM_COMMIT
+          if git diff --cached --quiet; then
+            echo "Rules are already current."
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "chore: update rules from SukkaW/Surge"
+          gh auth setup-git
+          git push origin HEAD:main
+
