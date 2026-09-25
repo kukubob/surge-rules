@@ -7,6 +7,10 @@
 本仓库只托管生成后的 `List/` 规则，不包含代理节点、订阅地址或 Surge
 完整配置。`UPSTREAM_COMMIT` 记录当前规则对应的上游提交。
 
+## 文档
+
+- [代理需求整理](docs/proxy-requirements.md)：评价 IP 的维度、现状、目标，以及网络切换防泄漏的脚本思路。
+
 ## Surge 引用
 
 ```ini
